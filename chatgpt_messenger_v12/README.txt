@@ -1,1 +1,1 @@
-Documentation has moved to README.md. Open that file for installation, usage, permissions, and troubleshooting.
+ChatGPT Messenger v12 Ultimate v12.0.0
