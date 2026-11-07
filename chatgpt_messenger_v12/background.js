@@ -33,8 +33,8 @@ runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
-    if (request.action === "sendViaNetworkProxy") {
-        handleNetworkProxyExecution(request.payload)
+    if (request.action === "sendViaChatGPT") {
+        handleChatGPTSend(request.payload)
             .then(reply => sendResponse({ success: true, reply: reply }))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
@@ -49,12 +49,12 @@ async function findActiveChatGPTTab() {
     return null;
 }
 
-async function handleNetworkProxyExecution(payload) {
+async function handleChatGPTSend(payload) {
     let tab = await findActiveChatGPTTab();
     if (!tab) {
         tab = await new Promise((resolve) => {
             tabs.create({ url: TARGET_CONVERSATION_URL, active: false }, newTab => {
-                setTimeout(() => resolve(newTab), 4000); 
+                setTimeout(() => resolve(newTab), 4000);
             });
         });
     }
@@ -66,134 +66,148 @@ async function handleNetworkProxyExecution(payload) {
     const injectionResults = await scripting.executeScript({
         target: { tabId: tab.id },
         func: async (chatPayload) => {
+            const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
             try {
-                // Step 1: Fetch chat requirements with realistic browser headers to satisfy WAF & Sentinel
-                let chatReqToken = "";
-                try {
-                    const reqRes = await fetch("https://chatgpt.com/backend-api/sentinel/chat-requirements", {
-                        method: "POST",
-                        credentials: "include",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Accept": "application/json",
-                            "Origin": "https://chatgpt.com",
-                            "Referer": "https://chatgpt.com/",
-                            "Sec-Fetch-Dest": "empty",
-                            "Sec-Fetch-Mode": "cors",
-                            "Sec-Fetch-Site": "same-origin",
-                            "User-Agent": navigator.userAgent
-                        },
-                        body: JSON.stringify({})
-                    });
-                    if (reqRes.ok) {
-                        const reqData = await reqRes.json();
-                        chatReqToken = reqData.token || "";
+                const findComposer = () =>
+                    document.querySelector("#prompt-textarea") ||
+                    document.querySelector('[data-testid="prompt-textarea"]') ||
+                    document.querySelector('textarea[placeholder]') ||
+                    document.querySelector('[contenteditable="true"]');
+
+                let composer = null;
+                const composerDeadline = Date.now() + 15000;
+
+                while (!composer && Date.now() < composerDeadline) {
+                    composer = findComposer();
+                    if (!composer) await delay(250);
+                }
+
+                if (!composer) {
+                    return {
+                        success: false,
+                        error: "ChatGPT's message box was not found. Make sure you're signed in and the page has loaded."
+                    };
+                }
+
+                const history = Array.isArray(chatPayload.history)
+                    ? chatPayload.history.slice(-16)
+                    : [];
+                const previousMessages = history
+                    .filter(item => item && typeof item.content === "string")
+                    .map(item => (item.role === "assistant" ? "ChatGPT: " : "You: ") + item.content)
+                    .join("\n\n");
+
+                const messageText = previousMessages
+                    ? "Previous conversation from this messenger:\n" + previousMessages +
+                      "\n\nNew message:\n" + chatPayload.message
+                    : chatPayload.message;
+
+                const beforeAssistant = Array.from(
+                    document.querySelectorAll('[data-message-author-role="assistant"]')
+                ).at(-1) || null;
+                const beforeAssistantText = beforeAssistant?.innerText || "";
+
+                composer.focus();
+
+                if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+                    const prototype = composer instanceof HTMLTextAreaElement
+                        ? HTMLTextAreaElement.prototype
+                        : HTMLInputElement.prototype;
+                    const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+                    if (!valueSetter) {
+                        throw new Error("Could not enter text into ChatGPT's message box.");
                     }
-                } catch (e) {}
+                    valueSetter.call(composer, messageText);
+                    composer.dispatchEvent(new InputEvent("input", {
+                        bubbles: true,
+                        inputType: "insertText",
+                        data: messageText
+                    }));
+                } else {
+                    document.execCommand("selectAll", false, null);
+                    const inserted = document.execCommand("insertText", false, messageText);
+                    if (!inserted) {
+                        composer.textContent = messageText;
+                    }
+                    composer.dispatchEvent(new InputEvent("input", {
+                        bubbles: true,
+                        inputType: "insertText",
+                        data: messageText
+                    }));
+                }
 
-                const messages = [];
-                if (chatPayload.history && chatPayload.history.length > 0) {
-                    chatPayload.history.forEach(msg => {
-                        messages.push({
-                            author: { role: msg.role },
-                            content: { content_type: "text", parts: [msg.content] },
-                            create_time: Date.now() / 1000,
-                            status: "finished_successfully"
+                let sendButton = null;
+                const buttonDeadline = Date.now() + 5000;
+
+                while (Date.now() < buttonDeadline) {
+                    sendButton =
+                        document.querySelector('button[data-testid="send-button"]') ||
+                        Array.from(document.querySelectorAll("button")).find(button => {
+                            const label = (button.getAttribute("aria-label") || "") + " " + (button.title || "");
+                            return /\bsend\b/i.test(label);
                         });
-                    });
+
+                    if (sendButton && !sendButton.disabled) break;
+                    await delay(100);
                 }
 
-                messages.push({
-                    author: { role: "user" },
-                    content: { content_type: "text", parts: [chatPayload.message] },
-                    create_time: Date.now() / 1000,
-                    status: "finished_successfully"
-                });
-
-                const headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                    "Origin": "https://chatgpt.com",
-                    "Referer": "https://chatgpt.com/",
-                    "Sec-Fetch-Dest": "empty",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "same-origin",
-                    "User-Agent": navigator.userAgent
-                };
-
-                if (chatReqToken) {
-                    headers["openai-sentinel-chat-requirements-token"] = chatReqToken;
+                if (!sendButton || sendButton.disabled) {
+                    return {
+                        success: false,
+                        error: "ChatGPT did not enable its Send button after the message was entered."
+                    };
                 }
 
-                const response = await fetch("https://chatgpt.com/backend-api/conversation", {
-                    method: "POST",
-                    credentials: "include",
-                    headers: headers,
-                    body: JSON.stringify({
-                        action: "next",
-                        messages: messages,
-                        model: "auto",
-                        timezone_offset_min: new Date().getTimezoneOffset(),
-                        history_and_training_disabled: false,
-                        supports_buffering: true
-                    })
-                });
+                sendButton.click();
 
-                if (!response.ok) {
-                    const errText = await response.text();
-                    return { success: false, error: `HTTP ${response.status}: ${errText.slice(0, 300)}` };
-                }
+                const responseDeadline = Date.now() + 120000;
+                let lastText = "";
+                let stableSince = 0;
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let lastAssistantMessage = "";
-                let buffer = "";
+                while (Date.now() < responseDeadline) {
+                    const assistantNodes = document.querySelectorAll(
+                        '[data-message-author-role="assistant"]'
+                    );
+                    const latestAssistant = assistantNodes[assistantNodes.length - 1] || null;
+                    const latestText = latestAssistant?.innerText?.trim() || "";
+                    const changed = latestAssistant &&
+                        (latestAssistant !== beforeAssistant || latestText !== beforeAssistantText);
+                    const stillGenerating =
+                        !!document.querySelector('[data-testid="stop-button"]') ||
+                        !!document.querySelector('button[aria-label*="Stop generating"]');
 
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop();
-
-                    for (const line of lines) {
-                        if (line.startsWith("data: ")) {
-                            const jsonStr = line.slice(6).trim();
-                            if (jsonStr === "[DONE]") continue;
-                            try {
-                                const parsed = JSON.parse(jsonStr);
-                                if (parsed && parsed.message && parsed.message.author && parsed.message.author.role === "assistant") {
-                                    const parts = parsed.message.content?.parts;
-                                    if (parts && parts.length > 0) {
-                                        lastAssistantMessage = parts[0];
-                                    }
-                                }
-                            } catch (e) {}
+                    if (changed && latestText) {
+                        if (latestText !== lastText) {
+                            lastText = latestText;
+                            stableSince = Date.now();
+                        } else if (!stillGenerating && Date.now() - stableSince >= 1800) {
+                            return { success: true, reply: latestText };
                         }
                     }
+
+                    await delay(300);
                 }
 
-                return { 
-                    success: true, 
-                    reply: lastAssistantMessage || "[Success] Response received successfully!" 
+                return {
+                    success: false,
+                    error: "ChatGPT did not finish a response within two minutes. Check the open ChatGPT tab."
                 };
-
-            } catch (err) {
-                return { success: false, error: err.toString() };
+            } catch (error) {
+                return { success: false, error: error?.message || String(error) };
             }
         },
         args: [payload]
     });
 
     if (!injectionResults || !injectionResults[0] || !injectionResults[0].result) {
-        throw new Error("Script injection returned no result.");
+        throw new Error("Could not read the result from the ChatGPT tab.");
     }
 
-    const res = injectionResults[0].result;
-    if (!res.success) {
-        throw new Error(res.error || "Unknown execution error.");
+    const result = injectionResults[0].result;
+    if (!result.success) {
+        throw new Error(result.error || "ChatGPT send failed.");
     }
 
-    return res.reply;
+    return result.reply;
 }
