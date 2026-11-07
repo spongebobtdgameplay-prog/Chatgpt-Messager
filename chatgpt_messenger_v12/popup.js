@@ -11,151 +11,216 @@ const syncButton = document.getElementById("syncButton");
 const authDot = document.getElementById("authDot");
 const authStatusText = document.getElementById("authStatusText");
 
-const storage = (typeof browser !== 'undefined') ? browser.storage.local : chrome.storage.local;
-const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
+const isFirefoxApi = typeof browser !== "undefined";
+const api = isFirefoxApi ? browser : chrome;
+const storage = api.storage.local;
+const runtime = api.runtime;
+const MEMORY_KEY = "chatgpt_v12_memory";
+const MAX_HISTORY_ITEMS = 100;
 
 function setStatus(message, type = "info") {
-    statusPanel.className = "status"; 
-    if (type === "success" || type === "error" || type === "warning") {
+    statusPanel.className = "status";
+    if (["success", "error", "warning"].includes(type)) {
         statusPanel.classList.add(type);
     }
     statusText.textContent = message;
 }
 
-function setStatusUI(connected, text) {
-    if (connected) {
-        authDot.className = "status-dot green";
-        authStatusText.textContent = text || "Status: Tab Synced & Ready";
-    } else {
-        authDot.className = "status-dot red";
-        authStatusText.textContent = text || "Status: Open ChatGPT Tab";
-    }
+function setStatusUI(connected, message) {
+    authDot.className = connected ? "status-dot green" : "status-dot red";
+    authStatusText.textContent = message || (
+        connected ? "Status: ChatGPT tab found" : "Status: Open ChatGPT & Sync"
+    );
 }
 
-function setBusy(busy, label = "Sending...") {
+function setBusy(busy) {
     sendButton.disabled = busy;
     userMessageInput.disabled = busy;
-    sendLabel.textContent = busy ? label : "Send via Network Proxy";
+    syncButton.disabled = busy;
+    sendLabel.textContent = busy ? "Sending..." : "Send to ChatGPT";
 }
 
 async function loadMemory() {
-    return new Promise((resolve) => {
-        storage.get(["chatgpt_v12_memory"], (result) => {
-            resolve(result.chatgpt_v12_memory || []);
+    let result;
+    if (isFirefoxApi) {
+        result = await storage.get([MEMORY_KEY]);
+    } else {
+        result = await new Promise((resolve, reject) => {
+            storage.get([MEMORY_KEY], value => {
+                const error = runtime.lastError;
+                if (error) reject(new Error(error.message));
+                else resolve(value);
+            });
+        });
+    }
+
+    const history = result && Array.isArray(result[MEMORY_KEY])
+        ? result[MEMORY_KEY]
+        : [];
+    return history;
+}
+
+async function saveMemory(history) {
+    const value = { [MEMORY_KEY]: history.slice(-MAX_HISTORY_ITEMS) };
+    if (isFirefoxApi) {
+        await storage.set(value);
+        return;
+    }
+
+    await new Promise((resolve, reject) => {
+        storage.set(value, () => {
+            const error = runtime.lastError;
+            if (error) reject(new Error(error.message));
+            else resolve();
         });
     });
 }
 
-async function saveMemory(history) {
-    return new Promise((resolve) => {
-        storage.set({ "chatgpt_v12_memory": history }, resolve);
+async function sendRuntimeMessage(message) {
+    if (isFirefoxApi) {
+        return runtime.sendMessage(message);
+    }
+
+    return new Promise((resolve, reject) => {
+        runtime.sendMessage(message, response => {
+            const error = runtime.lastError;
+            if (error) reject(new Error(error.message));
+            else resolve(response);
+        });
     });
 }
 
 function renderHistory(history) {
-    chatHistoryContainer.innerHTML = "";
-    if (history.length === 0) {
-        chatHistoryContainer.innerHTML = "<div style='color: #9ca3af; font-style: italic; padding: 4px;'>Memory is empty.</div>";
+    chatHistoryContainer.replaceChildren();
+
+    if (!history.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-history";
+        empty.textContent = "No messages saved yet.";
+        chatHistoryContainer.appendChild(empty);
         return;
     }
-    
-    history.forEach(msg => {
+
+    history.forEach(message => {
         const item = document.createElement("div");
-        item.className = `history-item ${msg.role}`;
-        
+        item.className = `history-item ${message.role === "assistant" ? "assistant" : "user"}`;
+
         const role = document.createElement("div");
         role.className = "history-role";
-        role.textContent = msg.role === 'user' ? 'You' : 'ChatGPT';
-        
+        role.textContent = message.role === "assistant" ? "ChatGPT" : "You";
+
         const content = document.createElement("div");
-        content.textContent = msg.content;
-        
-        item.appendChild(role);
-        item.appendChild(content);
+        content.className = "history-content";
+        content.textContent = typeof message.content === "string" ? message.content : "";
+
+        item.append(role, content);
         chatHistoryContainer.appendChild(item);
     });
+
     chatHistoryContainer.scrollTop = chatHistoryContainer.scrollHeight;
 }
 
 async function checkStatus() {
-    runtime.sendMessage({ action: "getStatus" }, response => {
+    try {
+        const response = await sendRuntimeMessage({ action: "getStatus" });
         if (response && response.ok) {
-            setStatusUI(true, "Status: Session Ready (v12)");
+            setStatusUI(true, "Status: ChatGPT tab found");
         } else {
-            setStatusUI(false, "Status: Open chatgpt.com & Sync");
+            setStatusUI(false, "Status: Open ChatGPT & Sync");
         }
-    });
+    } catch (error) {
+        setStatusUI(false, "Status: Extension connection unavailable");
+    }
 }
 
-syncButton.addEventListener("click", () => {
-    setStatus("Synchronizing active session tab...", "info");
-    runtime.sendMessage({ action: "forceSync" }, response => {
-        if (response && response.success) {
-            setStatusUI(true, "Status: Session Successfully Synced!");
-            setStatus("Tab connection established!", "success");
-        } else {
-            setStatusUI(false);
-            setStatus(`Sync failed: ${response?.error || 'Open chatgpt.com tab first'}`, "error");
+syncButton.addEventListener("click", async () => {
+    syncButton.disabled = true;
+    setStatus("Opening or focusing your ChatGPT tab...", "info");
+
+    try {
+        const response = await sendRuntimeMessage({ action: "forceSync" });
+        if (!response || !response.success) {
+            throw new Error(response?.error || "Could not connect to the ChatGPT tab.");
         }
-    });
+        setStatusUI(true, "Status: ChatGPT tab found");
+        setStatus("ChatGPT is open. Sign in there if prompted, then send your message.", "success");
+    } catch (error) {
+        setStatusUI(false);
+        setStatus(`Sync failed: ${error.message}`, "error");
+    } finally {
+        syncButton.disabled = false;
+    }
 });
 
 sendButton.addEventListener("click", async () => {
     const message = userMessageInput.value.trim();
     if (!message) {
-        setStatus("Please enter a message to send.", "warning");
+        setStatus("Enter a message first.", "warning");
+        userMessageInput.focus();
         return;
     }
 
     setBusy(true);
-    setStatus("Executing network-level proxy pipeline...");
+    setStatus("Sending through the ChatGPT page...", "info");
 
     try {
-        const history = await loadMemory();
-        const currentHistory = [...history, { role: "user", content: message }];
-        renderHistory(currentHistory);
-        userMessageInput.value = ""; 
-
-        const result = await new Promise((resolve, reject) => {
-            runtime.sendMessage({
-                action: "sendViaNetworkProxy",
-                payload: {
-                    message: message,
-                    history: history
-                }
-            }, response => {
-                if (runtime.lastError) {
-                    return reject(new Error(runtime.lastError.message));
-                }
-                resolve(response);
-            });
+        const response = await sendRuntimeMessage({
+            action: "sendToChatGPT",
+            payload: { message }
         });
 
-
-        if (!result || !result.success) {
-            throw new Error(result?.error || "Execution failed.");
+        if (!response || !response.success) {
+            throw new Error(response?.error || "The message could not be sent.");
         }
 
-        currentHistory.push({ role: "assistant", content: result.reply });
-        await saveMemory(currentHistory);
-        renderHistory(currentHistory);
-        
-        setStatus(result.reply, "success");
-        setStatusUI(true);
+        const history = await loadMemory();
+        const updatedHistory = [...history, { role: "user", content: message }];
 
+        if (response.received && response.reply) {
+            updatedHistory.push({ role: "assistant", content: response.reply });
+        }
+
+        const trimmedHistory = updatedHistory.slice(-MAX_HISTORY_ITEMS);
+        await saveMemory(trimmedHistory);
+        renderHistory(trimmedHistory);
+        userMessageInput.value = "";
+        setStatusUI(true, "Status: ChatGPT tab connected");
+
+        if (response.received && response.reply) {
+            setStatus(response.reply, "success");
+        } else {
+            setStatus(
+                response.note || "The message was submitted. Check the ChatGPT tab for its response.",
+                "warning"
+            );
+        }
     } catch (error) {
         setStatus(`Error: ${error.message}`, "error");
-        setStatusUI(false);
+        await checkStatus();
     } finally {
         setBusy(false);
     }
 });
 
-clearMemoryButton.addEventListener("click", async () => {
-    await saveMemory([]);
-    renderHistory([]);
-    setStatus("Memory cleared successfully.", "info");
+userMessageInput.addEventListener("keydown", event => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        if (!sendButton.disabled) sendButton.click();
+    }
 });
 
-loadMemory().then(renderHistory);
+clearMemoryButton.addEventListener("click", async () => {
+    try {
+        await saveMemory([]);
+        renderHistory([]);
+        setStatus("Local message history cleared.", "info");
+    } catch (error) {
+        setStatus(`Could not clear local history: ${error.message}`, "error");
+    }
+});
+
+loadMemory().then(renderHistory).catch(error => {
+    renderHistory([]);
+    setStatus(`Could not load local history: ${error.message}`, "error");
+});
 checkStatus();
