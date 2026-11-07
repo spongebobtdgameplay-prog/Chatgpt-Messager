@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ChatGPT Messenger v12 Ultimate</title>
+  <title>ChatGPT Messenger</title>
   <link rel="stylesheet" href="popup.css">
   <script src="popup.js" defer></script>
 </head>
@@ -12,22 +12,22 @@
     <header class="header">
       <div class="brand-mark" aria-hidden="true">🚀</div>
       <div>
-        <p class="eyebrow">VERSION 12.0 ULTIMATE</p>
+        <p class="eyebrow">VERSION 12.1.0</p>
         <h1>ChatGPT Messenger</h1>
       </div>
     </header>
 
-    <section class="auth-box" aria-label="Session Status">
+    <section class="auth-box" aria-label="ChatGPT Tab Status">
       <div class="auth-status-row">
         <span id="authDot" class="status-dot red" aria-hidden="true"></span>
-        <span id="authStatusText">Status: Checking Tab...</span>
+        <span id="authStatusText">Status: Checking for ChatGPT tab...</span>
       </div>
       <button id="syncButton" class="secondary-button" type="button">Sync & Connect</button>
     </section>
 
-    <section class="memory-section" aria-label="Chat Memory">
+    <section class="memory-section" aria-label="Local Message History">
       <div class="memory-header">
-        <label>Recent Memory</label>
+        <label>Recent Messages (Local)</label>
         <button id="clearMemoryButton" class="text-button" type="button">Clear</button>
       </div>
       <div id="chatHistory" class="chat-history"></div>
@@ -35,25 +35,26 @@
 
     <section class="controls">
       <label for="userMessage">Message</label>
-      <textarea id="userMessage" rows="3" placeholder="Type your prompt here..."></textarea>
+      <textarea id="userMessage" rows="3" placeholder="Type your message here..."></textarea>
+      <p class="input-hint">Ctrl+Enter / Cmd+Enter to send</p>
     </section>
 
     <button id="sendButton" class="primary" type="button">
       <span class="button-icon" aria-hidden="true">↗</span>
-      <span id="sendLabel">Send via Network Proxy</span>
+      <span id="sendLabel">Send to ChatGPT</span>
     </button>
 
     <section id="status" class="status" role="status" aria-live="polite">
       <span class="status-icon" aria-hidden="true">💬</span>
       <div class="response-wrapper">
         <strong>Last Response:</strong>
-        <p id="statusText">Ready for prompt...</p>
+        <p id="statusText">Ready for a message...</p>
       </div>
     </section>
 
     <footer>
       <span class="footer-dot" aria-hidden="true"></span>
-      <span id="memoryStatus">v12 anti-bot bypass active.</span>
+      <span id="memoryStatus">Sends through your open ChatGPT tab. No API key required.</span>
     </footer>
   </main>
 </body>
