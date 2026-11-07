@@ -1,21 +1,25 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Messenger v12",
-  "version": "12.1.0",
-  "description": "Send prompts through your signed-in ChatGPT tab and keep a local message history.",
+  "name": "ChatGPT Messenger v12 Ultimate",
+  "version": "12.0.0",
+  "description": "The ultimate network-level proxy extension leveraging active session authentication, dynamic sentinel chat requirements, and fixed Cloudflare/WAF anti-bot 403 headers.",
   "action": {
     "default_popup": "popup.html"
   },
   "permissions": [
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "cookies",
+    "webRequest"
   ],
   "host_permissions": [
-    "https://chatgpt.com/*"
+    "https://chatgpt.com/*",
+    "https://ab.chatgpt.com/*",
+    "https://*.openai.com/*"
   ],
   "background": {
-    "scripts": ["background.js"],
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   }
 }
