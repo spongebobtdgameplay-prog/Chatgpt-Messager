@@ -35,7 +35,7 @@ function setStatusUI(connected, text) {
 function setBusy(busy, label = "Sending...") {
     sendButton.disabled = busy;
     userMessageInput.disabled = busy;
-    sendLabel.textContent = busy ? label : "Send via Network Proxy";
+    sendLabel.textContent = busy ? label : "Send message";
 }
 
 async function loadMemory() {
@@ -108,7 +108,7 @@ sendButton.addEventListener("click", async () => {
     }
 
     setBusy(true);
-    setStatus("Executing network-level proxy pipeline...");
+    setStatus("Sending through your signed-in ChatGPT tab...");
 
     try {
         const history = await loadMemory();
@@ -118,7 +118,7 @@ sendButton.addEventListener("click", async () => {
 
         const result = await new Promise((resolve, reject) => {
             runtime.sendMessage({
-                action: "sendViaNetworkProxy",
+                action: "sendViaChatGPT",
                 payload: {
                     message: message,
                     history: history
