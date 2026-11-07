@@ -14,7 +14,7 @@ h1 { margin: 0; font-size: 18px; color: #1f2937; }
 
 .auth-box { background: #ffffff; padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; }
 .auth-status-row { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; color: #374151; }
-.status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; }
+.status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
 .status-dot.red { background: #ef4444; }
 .status-dot.green { background: #10b981; }
 
@@ -22,21 +22,25 @@ h1 { margin: 0; font-size: 18px; color: #1f2937; }
 .memory-header { display: flex; justify-content: space-between; align-items: center; }
 label { font-size: 12px; font-weight: bold; color: #374151; }
 
-textarea { padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-family: inherit; font-size: 13px; background-color: #f9fafb; resize: vertical; min-height: 60px; }
+textarea { padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-family: inherit; font-size: 13px; background-color: #f9fafb; resize: vertical; min-height: 60px; box-sizing: border-box; width: 100%; }
 textarea:focus { outline: none; border-color: #2563eb; }
+textarea:disabled { opacity: 0.7; }
+.input-hint { margin: 0; color: #9ca3af; font-size: 10px; }
 
-.chat-history { max-height: 110px; overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
-.history-item { background: #f3f4f6; padding: 8px; border-radius: 6px; border-left: 3px solid #d1d5db; }
+.chat-history { max-height: 150px; overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+.history-item { background: #f3f4f6; padding: 8px; border-radius: 6px; border-left: 3px solid #d1d5db; overflow-wrap: anywhere; }
 .history-item.user { border-left-color: #2563eb; }
 .history-item.assistant { border-left-color: #10b981; background: #ecfdf5; }
 .history-role { font-weight: bold; font-size: 10px; margin-bottom: 3px; text-transform: uppercase; color: #6b7280; }
+.history-content { white-space: pre-wrap; line-height: 1.4; }
+.empty-history { color: #9ca3af; font-style: italic; padding: 4px; }
 
 button.primary { background: #2563eb; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; transition: background 0.2s; }
-button.primary:disabled { background: #9ca3af; cursor: not-allowed; }
+button.primary:disabled, .secondary-button:disabled { background: #9ca3af; cursor: not-allowed; }
 button.primary:hover:not(:disabled) { background: #1d4ed8; }
 
 .secondary-button { background: #f3f4f6; border: 1px solid #d1d5db; color: #374151; font-size: 11px; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-weight: 500; }
-.secondary-button:hover { background: #e5e7eb; }
+.secondary-button:hover:not(:disabled) { background: #e5e7eb; }
 
 .text-button { background: none; border: none; color: #ef4444; font-size: 11px; cursor: pointer; padding: 0; font-weight: 500; }
 .text-button:hover { text-decoration: underline; }
@@ -45,8 +49,9 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 .status.error { background: #fef2f2; border-color: #fecaca; }
 .status.warning { background: #fffbeb; border-color: #fde68a; }
 .status.success { background: #ecfdf5; border-color: #a7f3d0; }
+.response-wrapper { min-width: 0; }
 .response-wrapper strong { display: block; margin-bottom: 4px; font-size: 12px; color: #1e3a8a; }
-#statusText { margin: 0; line-height: 1.4; color: #1f2937; word-break: break-word; }
+#statusText { margin: 0; line-height: 1.4; color: #1f2937; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 footer { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 10px; }
-.footer-dot { height: 6px; width: 6px; background: #10b981; border-radius: 50%; }
+.footer-dot { height: 6px; width: 6px; background: #10b981; border-radius: 50%; flex: 0 0 auto; }
