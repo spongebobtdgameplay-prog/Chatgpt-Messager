@@ -15,9 +15,11 @@ const hideButton = document.getElementById("hideButton");
 
 const storage = (typeof browser !== 'undefined') ? browser.storage.local : chrome.storage.local;
 const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
-const MEMORY_KEY = "chatgpt_v15_memory";
-const LEGACY_MEMORY_KEY = "chatgpt_v12_memory";
-const CONVERSATION_STATE_KEY = "chatgpt_messenger_v15_conversation_state";
+const INTERCEPTED_PREFIX = "🤖: Bot: Intercepted message:";
+const MEMORY_KEY = "chatgpt_v16_memory";
+const LEGACY_MEMORY_KEYS = ["chatgpt_v15_memory", "chatgpt_v12_memory"];
+const CONVERSATION_STATE_KEY = "chatgpt_messenger_v16_conversation_state";
+const LEGACY_CONVERSATION_STATE_KEY = "chatgpt_messenger_v15_conversation_state";
 
 function setStatus(message, type = "info") {
     statusPanel.className = "status"; 
@@ -63,9 +65,12 @@ function storageSet(values) {
 }
 
 async function loadMemory() {
-    const stored = await storageGet([MEMORY_KEY, LEGACY_MEMORY_KEY]);
+    const stored = await storageGet([MEMORY_KEY, ...LEGACY_MEMORY_KEYS]);
     if (Array.isArray(stored[MEMORY_KEY])) return stored[MEMORY_KEY];
-    const legacy = Array.isArray(stored[LEGACY_MEMORY_KEY]) ? stored[LEGACY_MEMORY_KEY] : [];
+
+    const legacy = LEGACY_MEMORY_KEYS
+        .map(key => stored[key])
+        .find(value => Array.isArray(value)) || [];
     if (legacy.length) await saveMemory(legacy);
     return legacy;
 }
@@ -75,8 +80,14 @@ async function saveMemory(history) {
 }
 
 async function loadConversationState() {
-    const stored = await storageGet(CONVERSATION_STATE_KEY);
-    return stored[CONVERSATION_STATE_KEY] || null;
+    const stored = await storageGet([CONVERSATION_STATE_KEY, LEGACY_CONVERSATION_STATE_KEY]);
+    if (Object.prototype.hasOwnProperty.call(stored, CONVERSATION_STATE_KEY)) {
+        return stored[CONVERSATION_STATE_KEY] || null;
+    }
+
+    const legacy = stored[LEGACY_CONVERSATION_STATE_KEY] || null;
+    if (legacy) await saveConversationState(legacy);
+    return legacy;
 }
 
 async function saveConversationState(state) {
@@ -96,7 +107,7 @@ function renderHistory(history) {
         
         const role = document.createElement("div");
         role.className = "history-role";
-        role.textContent = msg.role === 'user' ? 'You' : 'ChatGPT';
+        role.textContent = msg.role === 'user' ? '🤖 Bot · Intercepted' : 'ChatGPT';
         
         const content = document.createElement("div");
         content.textContent = msg.content;
@@ -111,7 +122,7 @@ function renderHistory(history) {
 async function checkStatus() {
     runtime.sendMessage({ action: "getStatus" }, response => {
         if (response && response.ok) {
-            setStatusUI(true, "Status: Session Ready (v15 WORKING)");
+            setStatusUI(true, "Status: Session Ready (v16 GOATED)");
         } else {
             setStatusUI(false, "Status: Open chatgpt.com & Sync");
         }
@@ -132,18 +143,22 @@ syncButton.addEventListener("click", () => {
 });
 
 sendButton.addEventListener("click", async () => {
-    const message = userMessageInput.value.trim();
-    if (!message) {
+    const typedMessage = userMessageInput.value.trim();
+    if (!typedMessage) {
         setStatus("Please enter a message to send.", "warning");
         return;
     }
 
+    const message = INTERCEPTED_PREFIX + "\n" + typedMessage;
+
     setBusy(true);
-    setStatus("Sending to the current ChatGPT conversation...");
+    setStatus("Sending intercepted message to the current ChatGPT conversation...");
 
     try {
-        const history = await loadMemory();
-        const conversationState = await loadConversationState();
+        const [history, conversationState] = await Promise.all([
+            loadMemory(),
+            loadConversationState()
+        ]);
         const currentHistory = [...history, { role: "user", content: message }];
         renderHistory(currentHistory);
 
@@ -167,10 +182,10 @@ sendButton.addEventListener("click", async () => {
         renderHistory(currentHistory);
         userMessageInput.value = "";
         setStatus(result.reply, "success");
-        setStatusUI(true, "Status: Connected to current conversation (v15 WORKING)");
+        setStatusUI(true, "Status: Connected to current conversation (v16 GOATED)");
     } catch (error) {
         renderHistory(await loadMemory());
-        userMessageInput.value = message;
+        userMessageInput.value = typedMessage;
         setStatus("Error: " + error.message, "error");
         setStatusUI(false, "Status: Message not sent");
     } finally {

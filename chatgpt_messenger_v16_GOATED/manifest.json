@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Messenger v15 WORKING",
-  "version": "15.0.0",
-  "description": "A persistent extension window for sending messages to your signed-in ChatGPT conversation.",
+  "name": "ChatGPT Messenger v16 GOATED",
+  "version": "16.0.0",
+  "description": "A persistent ChatGPT Messenger window with an intercepted-message prefix and conversation continuity.",
   "action": {
-    "default_title": "Open ChatGPT Messenger v15 WORKING"
+    "default_title": "Open ChatGPT Messenger v16 GOATED"
   },
   "permissions": [
     "storage",

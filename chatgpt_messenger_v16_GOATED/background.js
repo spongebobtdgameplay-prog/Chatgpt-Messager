@@ -10,8 +10,10 @@ const actionApi = (typeof browser !== "undefined")
     ? (browser.action || browser.browserAction)
     : (chrome.action || chrome.browserAction);
 
-const CONVERSATION_STATE_KEY = "chatgpt_messenger_v15_conversation_state";
-const TARGET_TAB_KEY = "chatgpt_messenger_v15_target_tab_id";
+const CONVERSATION_STATE_KEY = "chatgpt_messenger_v16_conversation_state";
+const LEGACY_CONVERSATION_STATE_KEY = "chatgpt_messenger_v15_conversation_state";
+const TARGET_TAB_KEY = "chatgpt_messenger_v16_target_tab_id";
+const LEGACY_TARGET_TAB_KEY = "chatgpt_messenger_v15_target_tab_id";
 const MESSENGER_WINDOW_URL = runtime.getURL("popup.html");
 
 function apiCall(api, method, ...args) {
@@ -131,15 +133,68 @@ runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-async function findActiveChatGPTTab() {
-    const allTabs = await apiCall(tabs, "query", { url: "https://chatgpt.com/*" });
-    if (!allTabs.length) return null;
+async function getChatGPTTabById(tabId) {
+    if (tabId == null) return null;
+    try {
+        const tab = await apiCall(tabs, "get", tabId);
+        return (tab?.url || "").startsWith("https://chatgpt.com/") ? tab : null;
+    } catch (_) {
+        return null;
+    }
+}
 
-    const stored = await apiCall(storage, "get", TARGET_TAB_KEY);
-    const preferredId = stored?.[TARGET_TAB_KEY];
-    return allTabs.find(tab => tab.id === preferredId) ||
-        allTabs.find(tab => tab.active) ||
-        allTabs[0];
+async function findActiveChatGPTTab(preferredTabId = null) {
+    // Prefer the tab already associated with this conversation: no broad tab scan.
+    const conversationTab = await getChatGPTTabById(preferredTabId);
+    if (conversationTab) return conversationTab;
+
+    const stored = await apiCall(storage, "get", [TARGET_TAB_KEY, LEGACY_TARGET_TAB_KEY]);
+    const storedId = stored?.[TARGET_TAB_KEY] ?? stored?.[LEGACY_TARGET_TAB_KEY];
+    const storedTab = await getChatGPTTabById(storedId);
+    if (storedTab) {
+        if (stored?.[TARGET_TAB_KEY] !== storedTab.id) {
+            await apiCall(storage, "set", { [TARGET_TAB_KEY]: storedTab.id });
+        }
+        return storedTab;
+    }
+
+    const allTabs = await apiCall(tabs, "query", { url: "https://chatgpt.com/*" });
+    return allTabs.find(tab => tab.active) || allTabs[0] || null;
+}
+
+function waitForTabReady(tabId, timeoutMs = 20000) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId = null;
+
+        const cleanup = () => {
+            tabs.onUpdated.removeListener(onUpdated);
+            if (timeoutId !== null) clearTimeout(timeoutId);
+        };
+        const finish = error => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (error) reject(error);
+            else resolve();
+        };
+        const onUpdated = (updatedTabId, changeInfo, updatedTab) => {
+            if (updatedTabId === tabId &&
+                (changeInfo.status === "complete" || updatedTab?.status === "complete")) {
+                finish();
+            }
+        };
+
+        tabs.onUpdated.addListener(onUpdated);
+        timeoutId = setTimeout(
+            () => finish(new Error("The ChatGPT tab did not finish loading within 20 seconds. Try Sync & Connect.")),
+            timeoutMs
+        );
+
+        apiCall(tabs, "get", tabId).then(currentTab => {
+            if (currentTab?.status === "complete") finish();
+        }).catch(finish);
+    });
 }
 
 async function startNewConversation() {
@@ -157,10 +212,10 @@ async function startNewConversation() {
 }
 
 async function handleNetworkProxyExecution(payload) {
-    let tab = await findActiveChatGPTTab();
+    let tab = await findActiveChatGPTTab(payload?.conversationState?.tabId);
     if (!tab) {
         tab = await apiCall(tabs, "create", { url: TARGET_CONVERSATION_URL, active: false });
-        await new Promise(resolve => setTimeout(resolve, 4000));
+        await waitForTabReady(tab.id);
     }
 
     if (!tab?.id) {
