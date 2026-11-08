@@ -15,6 +15,14 @@ const TARGET_TAB_KEY = "chatgpt_messenger_v15_target_tab_id";
 const MESSENGER_WINDOW_URL = runtime.getURL("popup.html");
 
 function apiCall(api, method, ...args) {
+    if (typeof browser !== "undefined") {
+        try {
+            return Promise.resolve(api[method](...args));
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    }
+
     return new Promise((resolve, reject) => {
         try {
             api[method](...args, result => {

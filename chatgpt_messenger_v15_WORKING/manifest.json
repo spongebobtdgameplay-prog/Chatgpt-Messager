@@ -9,10 +9,7 @@
   "permissions": [
     "storage",
     "scripting",
-    "tabs",
-    "windows",
-    "cookies",
-    "webRequest"
+    "tabs"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -21,6 +18,8 @@
   ],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   }
 }

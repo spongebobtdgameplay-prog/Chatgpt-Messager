@@ -208,7 +208,21 @@ newConversationButton.addEventListener("click", async () => {
 });
 
 hideButton.addEventListener("click", () => {
-    window.close();
+    if (typeof browser !== "undefined") {
+        browser.windows.getCurrent().then(currentWindow => {
+            if (currentWindow?.id != null) return browser.windows.remove(currentWindow.id);
+            window.close();
+        }).catch(() => window.close());
+        return;
+    }
+
+    chrome.windows.getCurrent(currentWindow => {
+        if (currentWindow?.id != null) {
+            chrome.windows.remove(currentWindow.id, () => {});
+        } else {
+            window.close();
+        }
+    });
 });
 
 loadMemory().then(renderHistory).catch(error => setStatus("Could not load memory: " + error.message, "error"));
