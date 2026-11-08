@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Messenger v34",
+  "version": "34.0.0",
+  "description": "ChatGPT Messenger v34: Robust multi-window tab detection, auto-recovery, and fully working ChatGPT stream proxy.",
+  "action": {
+    "default_title": "Open ChatGPT Messenger v34"
+  },
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://ab.chatgpt.com/*",
+    "https://*.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://discord.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ]
+  }
+}

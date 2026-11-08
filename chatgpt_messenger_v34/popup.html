@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatGPT Messenger v34</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div>
+        <p class="eyebrow">VERSION 34</p>
+        <h1>ChatGPT Messenger</h1>
+      </div>
+      <div class="header-actions">
+        <button id="newConversationButton" class="secondary-button new-chat-button" type="button">+ New Chat</button>
+        <button id="hideButton" class="secondary-button hide-button" type="button">Hide &gt;</button>
+      </div>
+    </header>
+
+    <section class="auth-box" aria-label="Session Status">
+      <div class="auth-status-row">
+        <span id="authDot" class="status-dot red" aria-hidden="true"></span>
+        <span id="authStatusText">Status: Checking Tab...</span>
+      </div>
+      <button id="syncButton" class="secondary-button" type="button">Sync & Connect</button>
+    </section>
+
+    <section class="controls" aria-label="API Key Setup">
+      <label for="apiKeyInput">Claude API Key (Secured Scope)</label>
+      <div style="display: flex; gap: 6px;">
+        <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-..." />
+        <button id="saveApiKeyButton" class="secondary-button" type="button">Save Key</button>
+      </div>
+    </section>
+
+    <section class="memory-section" aria-label="Chat Memory">
+      <div class="memory-header">
+        <label>Recent Memory</label>
+        <button id="clearMemoryButton" class="text-button" type="button">Clear</button>
+      </div>
+      <div id="chatHistory" class="chat-history"></div>
+    </section>
+
+    <section class="controls">
+      <label for="userMessage">Message / Topic Starter</label>
+      <textarea id="userMessage" rows="3" placeholder="Type your prompt here..."></textarea>
+    </section>
+
+    <div class="action-buttons">
+      <button id="sendButton" class="primary" type="button">
+        <span id="sendLabel">Send to ChatGPT</span>
+      </button>
+      <button id="twoWayButton" class="primary two-way-btn" type="button">
+        <span id="twoWayLabel">Funny Two-Way AI Connections</span>
+      </button>
+      <button id="stopButton" class="primary stop-btn" type="button" style="display: none;">
+        <span>Stop AI Conversation</span>
+      </button>
+    </div>
+
+    <section id="status" class="status" role="status" aria-live="polite">
+      <div class="response-wrapper">
+        <strong>Status / Last Response:</strong>
+        <p id="statusText">Ready for prompt...</p>
+      </div>
+    </section>
+
+    <footer>
+      <span class="footer-dot" aria-hidden="true"></span>
+      <span id="memoryStatus">v34 · Official Multi-Window Release</span>
+    </footer>
+  </main>
+</body>
+</html>
