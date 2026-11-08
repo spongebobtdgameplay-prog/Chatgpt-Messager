@@ -1,9 +1,92 @@
- "use strict";
+"use strict";
 
 const TARGET_CONVERSATION_URL = "https://chatgpt.com/";
 const runtime = (typeof browser !== "undefined") ? browser.runtime : chrome.runtime;
 const tabs = (typeof browser !== "undefined") ? browser.tabs : chrome.tabs;
 const scripting = (typeof browser !== "undefined") ? browser.scripting : chrome.scripting;
+const storage = (typeof browser !== "undefined") ? browser.storage.local : chrome.storage.local;
+const windowsApi = (typeof browser !== "undefined") ? browser.windows : chrome.windows;
+const actionApi = (typeof browser !== "undefined")
+    ? (browser.action || browser.browserAction)
+    : (chrome.action || chrome.browserAction);
+
+const CONVERSATION_STATE_KEY = "chatgpt_messenger_v15_conversation_state";
+const TARGET_TAB_KEY = "chatgpt_messenger_v15_target_tab_id";
+const MESSENGER_WINDOW_URL = runtime.getURL("popup.html");
+
+function apiCall(api, method, ...args) {
+    return new Promise((resolve, reject) => {
+        try {
+            api[method](...args, result => {
+                const error = runtime.lastError;
+                if (error) reject(new Error(error.message));
+                else resolve(result);
+            });
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+function getRouteConversationId(url) {
+    try {
+        const path = new URL(url).pathname;
+        const match = path.match(/\/c\/([^/]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+if (actionApi?.onClicked) {
+    actionApi.onClicked.addListener(async tab => {
+        try {
+            if (tab?.id != null && (tab.url || "").startsWith("https://chatgpt.com/")) {
+                await apiCall(storage, "set", { [TARGET_TAB_KEY]: tab.id });
+            }
+
+            const existingWindows = await apiCall(windowsApi, "getAll", { populate: true });
+            const existing = existingWindows.find(win =>
+                (win.tabs || []).some(item => item.url === MESSENGER_WINDOW_URL)
+            );
+
+            if (existing) {
+                await apiCall(windowsApi, "update", existing.id, { focused: true });
+            } else {
+                await apiCall(windowsApi, "create", {
+                    url: MESSENGER_WINDOW_URL,
+                    type: "popup",
+                    width: 440,
+                    height: 820,
+                    focused: true
+                });
+            }
+        } catch (error) {
+            console.error("ChatGPT Messenger window error:", error);
+        }
+    });
+}
+
+tabs.onActivated.addListener(({ tabId }) => {
+    apiCall(tabs, "get", tabId).then(tab => {
+        if ((tab.url || "").startsWith("https://chatgpt.com/")) {
+            return apiCall(storage, "set", { [TARGET_TAB_KEY]: tabId });
+        }
+    }).catch(() => {});
+});
+
+tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (!changeInfo.url || !changeInfo.url.startsWith("https://chatgpt.com/")) return;
+    apiCall(storage, "set", { [TARGET_TAB_KEY]: tabId }).catch(() => {});
+    if (!getRouteConversationId(changeInfo.url)) {
+        apiCall(storage, "get", CONVERSATION_STATE_KEY).then(saved => {
+            const state = saved?.[CONVERSATION_STATE_KEY];
+            if (state?.tabId === tabId) {
+                return apiCall(storage, "set", { [CONVERSATION_STATE_KEY]: null });
+            }
+        }).catch(() => {});
+    }
+});
 
 runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "getStatus") {
@@ -13,51 +96,74 @@ runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 
     if (request.action === "forceSync" || request.action === "openTab") {
-        findActiveChatGPTTab().then(tab => {
+        findActiveChatGPTTab().then(async tab => {
             if (tab) {
-                tabs.update(tab.id, { active: true }, () => {
-                    sendResponse({ success: true, tabId: tab.id });
-                });
+                await apiCall(tabs, "update", tab.id, { active: true });
             } else {
-                tabs.create({ url: TARGET_CONVERSATION_URL, active: true }, newTab => {
-                    sendResponse({ success: true, tabId: newTab.id });
-                });
+                tab = await apiCall(tabs, "create", { url: TARGET_CONVERSATION_URL, active: true });
             }
+            await apiCall(storage, "set", { [TARGET_TAB_KEY]: tab.id });
+            sendResponse({ success: true, tabId: tab.id });
         }).catch(err => sendResponse({ success: false, error: err.message }));
+        return true;
+    }
+
+    if (request.action === "startNewConversation") {
+        startNewConversation()
+            .then(result => sendResponse({ success: true, ...result }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
     }
 
     if (request.action === "sendViaNetworkProxy") {
         handleNetworkProxyExecution(request.payload)
-            .then(reply => sendResponse({ success: true, reply }))
+            .then(result => sendResponse({ success: true, ...result }))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
     }
 });
 
 async function findActiveChatGPTTab() {
-    const allTabs = await tabs.query({ url: "https://chatgpt.com/*" });
-    return allTabs.length ? allTabs[0] : null;
+    const allTabs = await apiCall(tabs, "query", { url: "https://chatgpt.com/*" });
+    if (!allTabs.length) return null;
+
+    const stored = await apiCall(storage, "get", TARGET_TAB_KEY);
+    const preferredId = stored?.[TARGET_TAB_KEY];
+    return allTabs.find(tab => tab.id === preferredId) ||
+        allTabs.find(tab => tab.active) ||
+        allTabs[0];
+}
+
+async function startNewConversation() {
+    let tab = await findActiveChatGPTTab();
+    await apiCall(storage, "set", { [CONVERSATION_STATE_KEY]: null });
+
+    if (!tab) {
+        tab = await apiCall(tabs, "create", { url: TARGET_CONVERSATION_URL, active: false });
+    } else {
+        await apiCall(tabs, "update", tab.id, { url: TARGET_CONVERSATION_URL });
+    }
+
+    await apiCall(storage, "set", { [TARGET_TAB_KEY]: tab.id });
+    return { tabId: tab.id };
 }
 
 async function handleNetworkProxyExecution(payload) {
     let tab = await findActiveChatGPTTab();
     if (!tab) {
-        tab = await new Promise((resolve, reject) => {
-            tabs.create({ url: TARGET_CONVERSATION_URL, active: false }, newTab => {
-                if (runtime.lastError) return reject(new Error(runtime.lastError.message));
-                setTimeout(() => resolve(newTab), 4000);
-            });
-        });
+        tab = await apiCall(tabs, "create", { url: TARGET_CONVERSATION_URL, active: false });
+        await new Promise(resolve => setTimeout(resolve, 4000));
     }
 
     if (!tab?.id) {
         throw new Error("Could not find or open chatgpt.com tab. Click 'Sync & Connect'.");
     }
 
+    await apiCall(storage, "set", { [TARGET_TAB_KEY]: tab.id });
+
     const injectionResults = await scripting.executeScript({
         target: { tabId: tab.id },
-        func: async (chatPayload) => {
+        func: async (chatPayload, targetTabId) => {
             const API = "/backend-api";
             const ACCOUNT_HEADER = "ChatGPT-Account-Id";
             const SENTINEL = {
@@ -417,6 +523,66 @@ async function handleNetworkProxyExecution(payload) {
                 };
             }
 
+
+            function getPageConversationId() {
+                const match = window.location.pathname.match(/\/c\/([^/]+)/);
+                return match ? decodeURIComponent(match[1]) : null;
+            }
+
+            function findCurrentAssistantMessage(conversationData) {
+                const mapping = conversationData?.mapping;
+                const currentNode = conversationData?.current_node || conversationData?.currentNode;
+
+                if (mapping && currentNode) {
+                    let nodeId = currentNode;
+                    const visited = new Set();
+                    while (nodeId && !visited.has(nodeId)) {
+                        visited.add(nodeId);
+                        const node = mapping[nodeId];
+                        const message = node?.message;
+                        if (message?.author?.role === "assistant" && message.id) return message;
+                        nodeId = node?.parent || null;
+                    }
+                }
+
+                const candidates = [];
+                if (mapping && typeof mapping === "object") {
+                    for (const node of Object.values(mapping)) {
+                        if (node?.message?.author?.role === "assistant" && node.message.id) {
+                            candidates.push(node.message);
+                        }
+                    }
+                }
+                if (Array.isArray(conversationData?.messages)) {
+                    candidates.push(...conversationData.messages.filter(message =>
+                        message?.author?.role === "assistant" && message.id
+                    ));
+                }
+                candidates.sort((a, b) => (a.create_time || 0) - (b.create_time || 0));
+                return candidates[candidates.length - 1] || null;
+            }
+
+            function getAssistantText(message) {
+                const parts = message?.content?.parts;
+                if (Array.isArray(parts)) {
+                    return parts.map(part => typeof part === "string" ? part : (part?.text || ""))
+                        .filter(Boolean).join("\n");
+                }
+                if (typeof message?.content?.text === "string") return message.content.text;
+                if (typeof message?.text === "string") return message.text;
+                return "";
+            }
+
+            async function fetchConversationData(conversationId, session, traceId) {
+                const response = await fetch(API + "/conversation/" + encodeURIComponent(conversationId), {
+                    method: "GET",
+                    credentials: "same-origin",
+                    headers: commonHeaders(session, traceId, { Accept: "application/json" }),
+                    cache: "no-store"
+                });
+                return await readJsonResponse(response, "Conversation lookup");
+            }
+
             async function main() {
                 if (typeof chatPayload?.message !== "string" || !chatPayload.message.trim()) {
                     throw new Error("Enter a message before sending.");
@@ -425,13 +591,37 @@ async function handleNetworkProxyExecution(payload) {
                 const session = await getSession();
                 const traceId = randomId();
                 const userMessageId = randomId();
-                const savedStateKey = "__CHATGPT_MESSENGER_V12_STATE__";
-                let savedState = null;
-                try { savedState = JSON.parse(sessionStorage.getItem(savedStateKey) || "null"); }
-                catch (_) { savedState = null; }
+                const pageConversationId = getPageConversationId();
+                let savedState = chatPayload?.conversationState || null;
 
-                const conversationId = savedState?.conversationId || null;
-                const parentMessageId = savedState?.parentMessageId || "client-created-root";
+                // Migrate the conversation created by the v12 build when it is still in this tab.
+                if (!savedState && !pageConversationId) {
+                    try {
+                        savedState = JSON.parse(sessionStorage.getItem("__CHATGPT_MESSENGER_V12_STATE__") || "null");
+                    } catch (_) {
+                        savedState = null;
+                    }
+                }
+
+                let conversationId = null;
+                let parentMessageId = "client-created-root";
+                const savedStateBelongsToTab = savedState?.tabId === targetTabId ||
+                    (!savedState?.tabId && !pageConversationId);
+
+                if (savedState?.conversationId && savedStateBelongsToTab &&
+                    (!pageConversationId || pageConversationId === savedState.conversationId)) {
+                    conversationId = savedState.conversationId;
+                    parentMessageId = savedState.parentMessageId || parentMessageId;
+                } else if (pageConversationId) {
+                    const currentConversation = await fetchConversationData(pageConversationId, session, traceId);
+                    const currentAssistant = findCurrentAssistantMessage(currentConversation);
+                    if (!currentAssistant?.id) {
+                        throw new Error("The open ChatGPT conversation has no completed assistant message to continue from. Wait for its reply, then send again.");
+                    }
+                    conversationId = pageConversationId;
+                    parentMessageId = currentAssistant.id;
+                }
+
                 const body = makeRequestBody(chatPayload.message.trim(), conversationId, parentMessageId, userMessageId);
                 const requirementsKey = makeRequirementsKey();
                 const jsonHeaders = commonHeaders(session, traceId, { "Content-Type": "application/json", Accept: "application/json" });
@@ -539,25 +729,50 @@ async function handleNetworkProxyExecution(payload) {
                 const decoder = new TextDecoder("utf-8");
                 let buffer = "";
                 let dataLines = [];
-                let latestText = "";
-                let receivedConversationId = conversationId;
+                let snapshotText = "";
+                let deltaText = "";
+                let receivedConversationId = conversationId || response.headers.get("x-conversation-id") || null;
                 let assistantMessageId = null;
+                let streamError = null;
+
+                function inspectEvent(event) {
+                    if (!event || typeof event !== "object") return;
+                    if (typeof event.conversation_id === "string") receivedConversationId = event.conversation_id;
+                    if (typeof event.message?.conversation_id === "string") receivedConversationId = event.message.conversation_id;
+
+                    if (event.error) {
+                        streamError = typeof event.error === "string" ? event.error :
+                            (event.error.message || JSON.stringify(event.error));
+                    }
+                    if (event.type === "error" && !streamError) {
+                        streamError = typeof event.message === "string" ? event.message : "ChatGPT returned a stream error.";
+                    }
+
+                    const candidates = [event.message, event.data?.message, event];
+                    for (const message of candidates) {
+                        if (message?.author?.role !== "assistant") continue;
+                        if (typeof message.id === "string") assistantMessageId = message.id;
+                        const text = getAssistantText(message);
+                        if (text) snapshotText = text;
+                    }
+
+                    const delta = event.delta?.text ??
+                        event.delta?.content ??
+                        event.content?.delta?.text ??
+                        (typeof event.delta === "string" ? event.delta : null);
+                    if (typeof delta === "string" && delta) deltaText += delta;
+                }
 
                 function consumeEvent(raw) {
-                    if (!raw || raw.trim() === "[DONE]") return;
+                    const value = raw.trim();
+                    if (!value || value === "[DONE]") return;
                     try {
-                        const event = JSON.parse(raw);
-                        if (typeof event.conversation_id === "string") receivedConversationId = event.conversation_id;
-                        const message = event.message || event;
-                        if (message?.author?.role === "assistant") {
-                            if (typeof message.id === "string") assistantMessageId = message.id;
-                            const parts = message.content?.parts;
-                            if (Array.isArray(parts)) {
-                                latestText = parts.map(part => typeof part === "string" ? part : (part?.text || ""))
-                                    .filter(Boolean).join("\n");
-                            }
-                        }
-                    } catch (_) { /* Ignore non-JSON SSE metadata. */ }
+                        const parsed = JSON.parse(value);
+                        if (Array.isArray(parsed)) parsed.forEach(inspectEvent);
+                        else inspectEvent(parsed);
+                    } catch (_) {
+                        // Ignore keep-alive and non-JSON SSE metadata lines.
+                    }
                 }
 
                 function dispatchBlock() {
@@ -571,6 +786,8 @@ async function handleNetworkProxyExecution(payload) {
                     while (true) {
                         const { value, done } = await reader.read();
                         if (value) buffer += decoder.decode(value, { stream: !done });
+                        if (done) buffer += decoder.decode();
+
                         let index;
                         while ((index = buffer.indexOf("\n")) !== -1) {
                             let line = buffer.slice(0, index);
@@ -584,31 +801,55 @@ async function handleNetworkProxyExecution(payload) {
                         }
                         if (done) break;
                     }
-                    if (buffer.trim().startsWith("data:")) dataLines.push(buffer.trim().slice(5).replace(/^ /, ""));
+                    if (buffer.startsWith("data:")) dataLines.push(buffer.slice(5).replace(/^ /, ""));
                     dispatchBlock();
                 } finally {
                     try { reader.releaseLock(); } catch (_) { /* Ignore. */ }
                 }
 
+                let latestText = snapshotText || deltaText;
+                if (receivedConversationId && (!latestText || !assistantMessageId)) {
+                    try {
+                        const finalConversation = await fetchConversationData(receivedConversationId, session, traceId);
+                        const finalAssistant = findCurrentAssistantMessage(finalConversation);
+                        if (finalAssistant) {
+                            assistantMessageId = assistantMessageId || finalAssistant.id || null;
+                            latestText = latestText || getAssistantText(finalAssistant);
+                        }
+                    } catch (recoveryError) {
+                        if (!latestText && !streamError) streamError = recoveryError.message;
+                    }
+                }
+
                 if (!latestText) {
-                    throw new Error("The conversation stream ended without an assistant text response.");
+                    throw new Error(streamError
+                        ? "ChatGPT ended the response stream without assistant text: " + streamError
+                        : "ChatGPT ended the response stream without assistant text. The conversation state was not advanced; try sending again.");
                 }
-                if (receivedConversationId && assistantMessageId) {
-                    sessionStorage.setItem(savedStateKey, JSON.stringify({
+                if (!receivedConversationId) {
+                    throw new Error("ChatGPT returned assistant text but no conversation ID, so the next message cannot safely continue this chat.");
+                }
+                if (!assistantMessageId) {
+                    throw new Error("ChatGPT returned assistant text but no assistant message ID. The reply was received, but conversation continuity could not be saved.");
+                }
+
+                return {
+                    reply: latestText,
+                    conversationState: {
                         conversationId: receivedConversationId,
-                        parentMessageId: assistantMessageId
-                    }));
-                }
-                return latestText;
+                        parentMessageId: assistantMessageId,
+                        tabId: targetTabId
+                    }
+                };
             }
 
             try {
-                return { success: true, reply: await main() };
+                return { success: true, ...(await main()) };
             } catch (error) {
                 return { success: false, error: error?.message || String(error) };
             }
         },
-        args: [payload]
+        args: [payload, tab.id]
     });
 
     if (!injectionResults?.[0]?.result) {
@@ -616,5 +857,5 @@ async function handleNetworkProxyExecution(payload) {
     }
     const result = injectionResults[0].result;
     if (!result.success) throw new Error(result.error || "Unknown execution error.");
-    return result.reply;
+    return { reply: result.reply, conversationState: result.conversationState };
 }

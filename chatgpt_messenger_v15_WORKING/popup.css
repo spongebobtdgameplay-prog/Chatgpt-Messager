@@ -4,10 +4,15 @@ body {
   padding: 16px;
   background-color: #f9fafb;
   color: #111827;
-  width: 380px;
+  width: 408px;
+  min-height: 680px;
+  box-sizing: border-box;
 }
 .app { display: flex; flex-direction: column; gap: 14px; }
-.header { display: flex; align-items: center; gap: 12px; }
+.header { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.header-actions { display: flex; align-items: center; gap: 6px; }
+.new-chat-button { white-space: nowrap; }
+.hide-button { white-space: nowrap; }
 .brand-mark { font-size: 28px; }
 .eyebrow { font-size: 10px; text-transform: uppercase; color: #6b7280; margin: 0 0 2px 0; font-weight: bold; letter-spacing: 0.5px; }
 h1 { margin: 0; font-size: 18px; color: #1f2937; }
@@ -50,3 +55,4 @@ button.primary:hover:not(:disabled) { background: #1d4ed8; }
 
 footer { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 10px; }
 .footer-dot { height: 6px; width: 6px; background: #10b981; border-radius: 50%; }
+button.secondary-button:disabled { opacity: 0.55; cursor: not-allowed; }
