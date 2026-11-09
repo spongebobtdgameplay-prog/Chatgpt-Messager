@@ -38,12 +38,12 @@
 
 
     <section class="controls" aria-label="Local Diagnostics">
-      <label>Local SHA-256 Diagnostic Prefix</label>
+      <label>Diagnostic Fingerprint &amp; Discord Test</label>
       <div style="display: flex; gap: 6px; align-items: center;">
         <code id="diagnosticFingerprint">Not generated</code>
-        <button id="generateDiagnosticFingerprintButton" class="secondary-button" type="button">Generate</button>
+        <button id="generateDiagnosticFingerprintButton" class="secondary-button" type="button">Generate &amp; Send Test</button>
       </div>
-      <p id="diagnosticPrivacyNote">This identifier stays in this browser's extension storage. No diagnostic webhook or remote database is configured.</p>
+      <p id="diagnosticPrivacyNote">Diagnostic events are sent to the test Discord webhook. Reports contain only a SHA-256 install prefix, extension version, fixed event name, timestamp, and HTTP status—never credentials, cookies, prompts, or message text.</p>
     </section>
 
     <section class="memory-section" aria-label="Chat Memory">
