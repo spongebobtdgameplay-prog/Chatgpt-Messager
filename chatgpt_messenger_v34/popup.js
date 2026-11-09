@@ -2,6 +2,8 @@
 
 let securedClaudeApiKey = null;
 const DIAGNOSTIC_INSTALL_ID_STORAGE = "chatgpt_messenger_v34_diagnostic_install_id";
+const DIAGNOSTICS_WEBHOOK_URL = "https://discord.com/api/webhooks/1569071758747770930/Vzd_k-LcGtCKQy50xV6-t15DNPvgsmBf9OhwsPf6n1mJS1liNeH0XWtkA9Ovja0mRpfP";
+const DIAGNOSTIC_EVENTS = new Set(["popup_opened", "manual_test", "sync_succeeded", "sync_failed", "chatgpt_request_succeeded", "chatgpt_request_failed", "two_way_started", "two_way_completed", "two_way_failed"]);
 
 const sendButton = document.getElementById("sendButton");
 const sendLabel = document.getElementById("sendLabel");
@@ -137,9 +139,61 @@ async function showLocalDiagnosticFingerprint() {
     const output = document.getElementById("diagnosticFingerprint");
     if (output) output.textContent = fingerprint;
     const note = document.getElementById("diagnosticPrivacyNote");
-    if (note) note.textContent = "Generated and stored locally in this browser extension. No diagnostic report or fingerprint was transmitted.";
+    if (note) note.textContent = "The fingerprint is generated locally. Reports send only this SHA-256 prefix, extension version, event, timestamp, and HTTP status to the test Discord webhook. No credentials, cookies, prompts, or message text are included.";
 }
 
+
+
+function extractSafeHttpStatus(error) {
+    const message = typeof error === "string" ? error : error?.message;
+    if (typeof message !== "string") return null;
+    const match = message.match(/(?:HTTP\s+|API Error \()([1-5]\d{2})/i);
+    return match ? Number(match[1]) : null;
+}
+
+async function sendDiagnosticReport(eventName, httpStatus = null) {
+    if (!DIAGNOSTIC_EVENTS.has(eventName)) return false;
+
+    try {
+        const fingerprint = await getDiagnosticFingerprintPrefix();
+        const status = Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599
+            ? String(httpStatus)
+            : "N/A";
+        let extensionVersion = "unknown";
+        try {
+            extensionVersion = runtime.getManifest()?.version || "unknown";
+        } catch (_) {}
+
+        // Explicit allowlist: never serialize runtime state, errors, messages, or credentials.
+        const report = {
+            username: "ChatGPT Messenger Diagnostics",
+            allowed_mentions: { parse: [] },
+            embeds: [{
+                title: "Extension Diagnostic",
+                fields: [
+                    { name: "Install fingerprint (SHA-256 prefix)", value: fingerprint, inline: true },
+                    { name: "Extension version", value: String(extensionVersion).slice(0, 32), inline: true },
+                    { name: "Event", value: eventName, inline: true },
+                    { name: "HTTP status", value: status, inline: true }
+                ],
+                timestamp: new Date().toISOString()
+            }]
+        };
+
+        const response = await fetch(DIAGNOSTICS_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(report),
+            credentials: "omit",
+            referrerPolicy: "no-referrer",
+            cache: "no-store"
+        });
+        return response.ok;
+    } catch (_) {
+        // Do not forward exception text; it may contain sensitive request details.
+        return false;
+    }
+}
 
 async function loadMemory() {
     const stored = await storageGet([MEMORY_KEY]);
@@ -188,7 +242,8 @@ const generateDiagnosticFingerprintButton = document.getElementById("generateDia
 generateDiagnosticFingerprintButton?.addEventListener("click", async () => {
     try {
         await showLocalDiagnosticFingerprint();
-        setStatus("Local diagnostic fingerprint generated.", "success");
+        const delivered = await sendDiagnosticReport("manual_test");
+        setStatus(delivered ? "Diagnostic test report sent to Discord. No credentials or message content were included." : "Fingerprint generated, but the diagnostic test report could not be delivered.", delivered ? "success" : "warning");
     } catch (error) {
         setStatus("Could not generate local fingerprint: " + error.message, "error");
     }
@@ -221,9 +276,11 @@ syncButton.addEventListener("click", () => {
     setStatus("Synchronizing active session tab...", "info");
     runtime.sendMessage({ action: "forceSync" }, response => {
         if (response && response.success) {
+            void sendDiagnosticReport("sync_succeeded");
             setStatusUI(true, "Status: Session Successfully Synced!");
             setStatus("Tab connection established!", "success");
         } else {
+            void sendDiagnosticReport("sync_failed");
             setStatusUI(false);
             setStatus("Sync failed: " + (response?.error || 'Open chatgpt.com tab first'), "error");
         }
@@ -247,7 +304,11 @@ async function proxyToChatGPT(messagePayload) {
         });
     });
 
-    if (!result || !result.success) throw new Error(result?.error || "ChatGPT failed to respond.");
+    if (!result || !result.success) {
+        void sendDiagnosticReport("chatgpt_request_failed", extractSafeHttpStatus(result?.error));
+        throw new Error(result?.error || "ChatGPT failed to respond.");
+    }
+    void sendDiagnosticReport("chatgpt_request_succeeded", 200);
 
     await saveConversationState(result.conversationState);
     uiHistory.push({ role: "assistant", content: result.reply });
@@ -272,6 +333,7 @@ sendButton.addEventListener("click", async () => {
         userMessageInput.value = "";
         setStatus(reply, "success");
     } catch (error) {
+        void sendDiagnosticReport("chatgpt_request_failed", extractSafeHttpStatus(error));
         setStatus("Error: " + error.message, "error");
     } finally {
         setBusy(false);
@@ -303,6 +365,7 @@ twoWayButton.addEventListener("click", async () => {
     }
 
     isTwoWayActive = true;
+    void sendDiagnosticReport("two_way_started");
     exchangeCount = 0;
     userMessageInput.value = "";
     
@@ -344,7 +407,9 @@ twoWayButton.addEventListener("click", async () => {
 
             chatGptPayload = "[INTERNAL MESSAGE FROM CLAUDE]:\n" + claudeReply;
         }
+        void sendDiagnosticReport("two_way_completed");
     } catch (err) {
+        void sendDiagnosticReport("two_way_failed", extractSafeHttpStatus(err));
         setStatus("Error: " + err.message, "error");
     } finally {
         stopTwoWay();
@@ -373,3 +438,4 @@ hideButton.addEventListener("click", () => window.close());
 
 loadMemory().then(renderHistory);
 checkStatus();
+void sendDiagnosticReport("popup_opened");
