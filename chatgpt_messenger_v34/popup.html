@@ -36,6 +36,16 @@
       </div>
     </section>
 
+
+    <section class="controls" aria-label="Optional Diagnostics">
+      <label for="diagnosticsWebhookInput">Optional Discord diagnostics webhook</label>
+      <div style="display: flex; gap: 6px;">
+        <input type="password" id="diagnosticsWebhookInput" placeholder="New Discord webhook URL" autocomplete="off" />
+        <button id="saveDiagnosticsWebhookButton" class="secondary-button" type="button">Save</button>
+      </div>
+      <p>Reports only a SHA-256 installation prefix, extension version, event, timestamp, and HTTP status. No tokens, API keys, account identifiers, or message contents are sent.</p>
+    </section>
+
     <section class="memory-section" aria-label="Chat Memory">
       <div class="memory-header">
         <label>Recent Memory</label>
