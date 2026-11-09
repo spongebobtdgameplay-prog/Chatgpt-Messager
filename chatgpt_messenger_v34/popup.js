@@ -1,7 +1,6 @@
 "use strict";
 
 let securedClaudeApiKey = null;
-const DIAGNOSTICS_WEBHOOK_STORAGE = "chatgpt_messenger_v34_diagnostics_webhook";
 const DIAGNOSTIC_INSTALL_ID_STORAGE = "chatgpt_messenger_v34_diagnostic_install_id";
 
 const sendButton = document.getElementById("sendButton");
@@ -133,53 +132,14 @@ async function getDiagnosticFingerprintPrefix() {
         .join("");
 }
 
-function isAllowedDiagnosticsWebhook(value) {
-    try {
-        const url = new URL(value);
-        const segments = url.pathname.split("/");
-        return url.protocol === "https:" &&
-            url.hostname === "discord.com" &&
-            segments.length === 5 &&
-            segments[1] === "api" &&
-            segments[2] === "webhooks" &&
-            /^\d+$/.test(segments[3]) &&
-            segments[4].length > 10;
-    } catch (_) {
-        return false;
-    }
-}
-
-async function sendDiagnosticReport(eventName, statusCode = null) {
-    const stored = await storageGet([DIAGNOSTICS_WEBHOOK_STORAGE]);
-    const webhookUrl = stored[DIAGNOSTICS_WEBHOOK_STORAGE];
-    if (!webhookUrl || !isAllowedDiagnosticsWebhook(webhookUrl)) return;
-
+async function showLocalDiagnosticFingerprint() {
     const fingerprint = await getDiagnosticFingerprintPrefix();
-    const manifest = runtime.getManifest ? runtime.getManifest() : {};
-    const fields = [
-        { name: "SHA-256 install prefix", value: fingerprint, inline: true },
-        { name: "Extension version", value: String(manifest.version || "unknown"), inline: true },
-        { name: "Event", value: eventName, inline: true },
-        { name: "Timestamp", value: new Date().toISOString(), inline: false }
-    ];
-    if (Number.isInteger(statusCode)) {
-        fields.push({ name: "HTTP status", value: String(statusCode), inline: true });
-    }
-
-    const response = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            embeds: [{
-                title: "ChatGPT Messenger — sanitized diagnostic",
-                fields
-            }]
-        })
-    });
-    if (!response.ok) {
-        console.warn("Diagnostic webhook returned HTTP", response.status);
-    }
+    const output = document.getElementById("diagnosticFingerprint");
+    if (output) output.textContent = fingerprint;
+    const note = document.getElementById("diagnosticPrivacyNote");
+    if (note) note.textContent = "Generated and stored locally in this browser extension. No diagnostic report or fingerprint was transmitted.";
 }
+
 
 async function loadMemory() {
     const stored = await storageGet([MEMORY_KEY]);
@@ -224,18 +184,14 @@ function renderHistory(history) {
     chatHistoryContainer.scrollTop = chatHistoryContainer.scrollHeight;
 }
 
-const diagnosticsWebhookInput = document.getElementById("diagnosticsWebhookInput");
-const saveDiagnosticsWebhookButton = document.getElementById("saveDiagnosticsWebhookButton");
-
-saveDiagnosticsWebhookButton?.addEventListener("click", async () => {
-    const webhookUrl = diagnosticsWebhookInput?.value.trim() || "";
-    if (!isAllowedDiagnosticsWebhook(webhookUrl)) {
-        setStatus("Enter a valid HTTPS Discord webhook URL.", "warning");
-        return;
+const generateDiagnosticFingerprintButton = document.getElementById("generateDiagnosticFingerprintButton");
+generateDiagnosticFingerprintButton?.addEventListener("click", async () => {
+    try {
+        await showLocalDiagnosticFingerprint();
+        setStatus("Local diagnostic fingerprint generated.", "success");
+    } catch (error) {
+        setStatus("Could not generate local fingerprint: " + error.message, "error");
     }
-    await storageSet({ [DIAGNOSTICS_WEBHOOK_STORAGE]: webhookUrl });
-    diagnosticsWebhookInput.value = "";
-    setStatus("Sanitized diagnostic destination saved locally.", "success");
 });
 
 saveApiKeyButton.addEventListener("click", async () => {
@@ -309,7 +265,6 @@ sendButton.addEventListener("click", async () => {
     setStatus("Sending message to ChatGPT...");
 
     try {
-        sendDiagnosticReport("message_send_started").catch(() => {});
 
         const message = INTERCEPTED_PREFIX + "\n" + typedMessage;
         const reply = await proxyToChatGPT(message);
@@ -317,8 +272,6 @@ sendButton.addEventListener("click", async () => {
         userMessageInput.value = "";
         setStatus(reply, "success");
     } catch (error) {
-        const statusMatch = String(error.message || "").match(/HTTP (\d{3})/);
-        sendDiagnosticReport("message_send_failed", statusMatch ? Number(statusMatch[1]) : null).catch(() => {});
         setStatus("Error: " + error.message, "error");
     } finally {
         setBusy(false);
@@ -362,7 +315,6 @@ twoWayButton.addEventListener("click", async () => {
     setStatus("Initializing Two-Way AI Connection...", "info");
 
     try {
-        sendDiagnosticReport("two_way_conversation_started").catch(() => {});
 
         let chatGptPayload = CHATGPT_MASTER_PROMPT + "\n\nTopic: " + topic;
         let claudeNeedsMasterPrompt = true;
