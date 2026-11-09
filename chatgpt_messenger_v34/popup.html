@@ -37,13 +37,13 @@
     </section>
 
 
-    <section class="controls" aria-label="Optional Diagnostics">
-      <label for="diagnosticsWebhookInput">Optional Discord diagnostics webhook</label>
-      <div style="display: flex; gap: 6px;">
-        <input type="password" id="diagnosticsWebhookInput" placeholder="New Discord webhook URL" autocomplete="off" />
-        <button id="saveDiagnosticsWebhookButton" class="secondary-button" type="button">Save</button>
+    <section class="controls" aria-label="Local Diagnostics">
+      <label>Local SHA-256 Diagnostic Prefix</label>
+      <div style="display: flex; gap: 6px; align-items: center;">
+        <code id="diagnosticFingerprint">Not generated</code>
+        <button id="generateDiagnosticFingerprintButton" class="secondary-button" type="button">Generate</button>
       </div>
-      <p>Reports only a SHA-256 installation prefix, extension version, event, timestamp, and HTTP status. No tokens, API keys, account identifiers, or message contents are sent.</p>
+      <p id="diagnosticPrivacyNote">This identifier stays in this browser's extension storage. No diagnostic webhook or remote database is configured.</p>
     </section>
 
     <section class="memory-section" aria-label="Chat Memory">
