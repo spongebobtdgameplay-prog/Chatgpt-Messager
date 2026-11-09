@@ -96,39 +96,10 @@ tabs.onUpdated.addListener((tabId, changeInfo) => {
     }
 });
 
-async function getChatGPTBearerToken() {
-    let tab = await findActiveChatGPTTab();
-    if (!tab) return null;
-    try {
-        const results = await scripting.executeScript({
-            target: { tabId: tab.id },
-            func: async () => {
-                try {
-                    const res = await fetch("/api/auth/session", { method: "GET", credentials: "same-origin" });
-                    if (!res.ok) return null;
-                    const data = await res.json();
-                    return data?.accessToken || data?.user?.accessToken || null;
-                } catch (_) {
-                    return null;
-                }
-            }
-        });
-        return results?.[0]?.result || null;
-    } catch (_) {
-        return null;
-    }
-}
-
 runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "getStatus") {
         findActiveChatGPTTab().then(tab => sendResponse({ ok: !!tab }))
             .catch(() => sendResponse({ ok: false }));
-        return true;
-    }
-
-    if (request.action === "getBearerToken") {
-        getChatGPTBearerToken().then(token => sendResponse({ success: true, token }))
-            .catch(err => sendResponse({ success: false, error: err.message }));
         return true;
     }
 
@@ -283,11 +254,6 @@ async function handleNetworkProxyExecution(payload) {
                 return headers;
             }
 
-            async function readJsonResponse(response) {
-                const raw = await response.text();
-                return raw ? JSON.parse(raw) : {};
-            }
-
             async function main() {
                 const session = await getSession();
                 const userMessageId = randomId();
@@ -305,16 +271,6 @@ async function handleNetworkProxyExecution(payload) {
                     }]
                 };
 
-                try {
-                    const prepRes = await fetch(API + "/sentinel/chat-requirements/prepare", {
-                        method: "POST",
-                        credentials: "same-origin",
-                        headers: { ...commonHeaders(session), "Content-Type": "application/json" },
-                        body: JSON.stringify({ p: "gAAAAAC" })
-                    });
-                    await readJsonResponse(prepRes);
-                } catch (_) {}
-
                 const response = await fetch(API + "/conversation", {
                     method: "POST",
                     credentials: "same-origin",
@@ -327,8 +283,16 @@ async function handleNetworkProxyExecution(payload) {
                 });
 
                 if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error("ChatGPT API Error (" + response.status + "): " + errText);
+                    if (response.status === 401) {
+                        throw new Error("ChatGPT returned HTTP 401. Sign in again on chatgpt.com.");
+                    }
+                    if (response.status === 403) {
+                        throw new Error("ChatGPT returned HTTP 403. Its bot/device-protection check rejected this automated request. Complete any verification on chatgpt.com and use the normal website; this extension cannot bypass that check.");
+                    }
+                    if (response.status === 429) {
+                        throw new Error("ChatGPT returned HTTP 429. Requests are being rate-limited; wait before trying again.");
+                    }
+                    throw new Error("ChatGPT request failed with HTTP " + response.status + ".");
                 }
 
                 if (!response.body) {
